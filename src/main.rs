@@ -18,9 +18,9 @@ async fn main() {
     let solana_rpc_latency_task = solana_rpc_latency("ws://api.mainnet-beta.solana.com".to_string(), Duration::from_secs(10));
 
     //run both task in different threads
-    let jh = tokio::task::spawn(solana_rpc_latency_task);
+    let jh = tokio::task::spawn(grpc_latency_task);
 
-    let ws_latency = ws_latency_task.await;
+    let ws_latency = solana_rpc_latency_task.await;
     let grpc_latency = jh.await.unwrap();
 
     let mut diff_vec = vec![];
@@ -29,7 +29,7 @@ async fn main() {
             for (slot_id, grpc_time) in grpc.iter() {
                 if let Some(ws_time) = ws.get(slot_id) {
                     //check millisecond diff, if None then negative of other side
-                    let ws_latency = diff_in_milliseconds(*ws_time, *grpc_time);
+                    let ws_latency = calculate_latency_in_millis(*ws_time, *grpc_time);
                     println!("ws_latency: {:?}", ws_latency);
                     diff_vec.push(ws_latency as f64)
                 }
@@ -42,15 +42,16 @@ async fn main() {
 
     //print average diff
     let avg_diff = diff_vec.iter().sum::<f64>() / diff_vec.len() as f64;
-    println!("Average diff in milliseconds: {}", avg_diff);
+    println!("on average ws_took: {} millis more time", avg_diff);
 }
 
-fn diff_in_milliseconds(ws: Instant, grpc: Instant) -> f64 {
-    let maybe_ws_slower = ws.checked_duration_since(grpc).map(|v| v.as_millis());
-    let maybe_grpc_slower = grpc.checked_duration_since(ws).map(|v| v.as_millis());
-    match (maybe_ws_slower, maybe_grpc_slower) {
-        (Some(ws_latency), _) => -(ws_latency as f64),
-        (_, Some(grpc_latency)) => grpc_latency as f64,
+// basically doing (ws_time - grpc_time)
+fn calculate_latency_in_millis(ws: Instant, grpc: Instant) -> f64 {
+    let ws_slower_in_ms = ws.checked_duration_since(grpc).map(|v| v.as_millis());
+    let grpc_slower_in_ms = grpc.checked_duration_since(ws).map(|v| v.as_millis());
+    match (ws_slower_in_ms, grpc_slower_in_ms) {
+        (Some(ws_latency), _) => ws_latency as f64,
+        (_, Some(grpc_latency)) => -(grpc_latency as f64),
         _ => 0.0,
     }
 }
