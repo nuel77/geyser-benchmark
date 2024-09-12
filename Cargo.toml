@@ -1,0 +1,19 @@
+[package]
+name = "geyser-benchmarks"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.40.0", features = ["full"] }
+tokio-tungstenite = "0.23.1"
+futures-util = "0.3.30"
+yellowstone-grpc-client = "1.15.4"
+yellowstone-grpc-proto = "1.14.2"
+anyhow = "1.0.88"
+serde = "1.0.210"
+serde_json = "1.0.128"
+solana-sdk = { version = "2.0.0", features = ["default"] }
+solana-client = "1.18.23"
+
+[dev-dependencies]
+criterion = "0.5.1"
