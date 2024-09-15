@@ -5,6 +5,7 @@ use anyhow::Context;
 use futures_util::{SinkExt, StreamExt};
 use solana_client::nonblocking::pubsub_client;
 use std::collections::HashMap;
+use std::str::FromStr;
 use tokio::time::{Duration, Instant};
 use tokio_tungstenite::connect_async;
 use yellowstone_grpc_client::GeyserGrpcClient;
@@ -13,30 +14,31 @@ use yellowstone_grpc_proto::prelude::subscribe_update::UpdateOneof;
 
 #[tokio::main]
 async fn main() {
-    let grpc_latency_task = grpc_latency("http://rpc:10000".to_string(), Duration::from_secs(10));
-    let ws_latency_task = websocket_latency("ws://rpc:9005".to_string(), Duration::from_secs(10));
-    let solana_rpc_latency_task = solana_rpc_latency("ws://api.mainnet-beta.solana.com".to_string(), Duration::from_secs(10));
-
+    //let grpc_latency_task = grpc_latency("http://rpc:10000".to_string(), Duration::from_secs(10));
+    //let ws_latency_task = geyser_websocket_latency("ws://rpc:9005".to_string(), Duration::from_secs(10));
+    let solana_rpc_latency_task = solana_rpc_latency("wss://api.mainnet-beta.solana.com".to_string(), Duration::from_secs(10));
+    let astralane_rpc_latency_task = solana_rpc_latency("wss://api.mainnet-beta.solana.com".to_string(), Duration::from_secs(10));
     //run both task in different threads
-    let jh = tokio::task::spawn(grpc_latency_task);
 
-    let ws_latency = solana_rpc_latency_task.await;
+    let jh = tokio::task::spawn(solana_rpc_latency_task);
+
+    let ws_latency = astralane_rpc_latency_task.await;
     let grpc_latency = jh.await.unwrap();
 
     let mut diff_vec = vec![];
-    match (grpc_latency, ws_latency) {
+    match (&grpc_latency, &ws_latency) {
         (Ok(grpc), Ok(ws)) => {
             for (slot_id, grpc_time) in grpc.iter() {
                 if let Some(ws_time) = ws.get(slot_id) {
-                    //check millisecond diff, if None then negative of other side
+                    // ws_time - grpc_time
                     let ws_latency = calculate_latency_in_millis(*ws_time, *grpc_time);
                     println!("ws_latency: {:?}", ws_latency);
                     diff_vec.push(ws_latency as f64)
                 }
             }
         }
-        (_, _) => {
-            eprintln!("cannot run");
+        _ => {
+            eprintln!("cannot run {:?} {:?}", ws_latency, grpc_latency);
         }
     }
 
@@ -56,7 +58,7 @@ fn calculate_latency_in_millis(ws: Instant, grpc: Instant) -> f64 {
     }
 }
 
-async fn websocket_latency(
+async fn geyser_websocket_latency(
     endpoint: String,
     run_duration: Duration,
 ) -> anyhow::Result<HashMap<String, Instant>> {
@@ -162,10 +164,10 @@ async fn grpc_latency(
 async fn solana_rpc_latency(endpoint: String, run_duration: Duration) -> anyhow::Result<HashMap<String, Instant>> {
     let mut latencies = HashMap::new();
     let client = pubsub_client::PubsubClient::new(&endpoint).await?;
-
+    let pub_key = solana_program::pubkey::Pubkey::from_str("AbSR1An4izhrUkAx8CLpewdCJbMmnMgL1CDwwBG7465g").unwrap();
     //gives back processed blocks
     //https://solana.com/docs/rpc/websocket/slotsubscribe
-    let (mut stream, unsub) = client.slot_subscribe().await?;
+    let (mut stream, unsub) = client.account_subscribe(&pub_key, None).await?;
 
     let sleep = tokio::time::sleep(run_duration);
     tokio::pin!(sleep);
@@ -173,12 +175,18 @@ async fn solana_rpc_latency(endpoint: String, run_duration: Duration) -> anyhow:
     loop {
         tokio::select! {
             _ = &mut sleep => {
+                println!("task time out");
                 break;
             }
             response = stream.next() => {
+                println!("response: {:?}", response);
                 let now = tokio::time::Instant::now();
                 if let Some(resp) = response{
-                    latencies.insert(resp.slot.to_string(), now);
+                    let data_str = serde_json::to_string(&resp.value).unwrap();
+                    let hex = hex::encode(data_str.into_bytes());
+                    latencies.insert(hex, now);
+                }else{
+                    println!("no response");
                 }
             }
         }
